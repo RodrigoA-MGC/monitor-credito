@@ -1,26 +1,18 @@
 import io
+iimport io
 import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, text, pool
 
-
 # 👇 PRIMERO SIEMPRE
-
-st.write("🚀 App iniciando...")
-# ─────────────────────────────────────────────
-# 1. CONFIG
-# ─────────────────────────────────────────────
-
 st.set_page_config(
     page_title="Monitor de Crédito",
     page_icon="📊",
     layout="wide",
 )
 
-
 # 👇 DESPUÉS ya puedes usar st.*
 st.write("🚀 App iniciando...")
-
 # ─────────────────────────────────────────────
 # 2. CONSTANTES
 # ─────────────────────────────────────────────
