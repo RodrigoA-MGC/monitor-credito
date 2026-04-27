@@ -1,15 +1,8 @@
-<<<<<<< HEAD
-streamlit
-pandas
-sqlalchemy
-psycopg2-binary
-openpyxl
-python-dotenv
-=======
+
 streamlit==1.43.0
 pandas==2.2.3
 sqlalchemy==2.0.36
 psycopg2-binary==2.9.10
 openpyxl==3.1.5
 python-dotenv==1.0.1
->>>>>>> dc54c4d434587e79013ee12440b5001df0be7044
+

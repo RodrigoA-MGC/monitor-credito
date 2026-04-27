@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, text, pool
 try:
-# 👇 PRIMERO SIEMPRE
+    # 👇 PRIMERO SIEMPRE
     st.set_page_config(
     page_title="Monitor de Crédito",
     page_icon="📊",
