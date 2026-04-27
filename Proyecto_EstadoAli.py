@@ -69,29 +69,29 @@ def cargar_desde_excel(archivo, hoja) -> pd.DataFrame:
     return pd.read_excel(archivo, sheet_name=hoja)
 
 
-def cargar_desde_access(ruta: str, query: str) -> pd.DataFrame:
-    """
-    Lee Access usando el cursor directamente.
-    - Evita el UserWarning de pandas con conexiones DBAPI2.
-    - Los nombres de columna se toman tal cual están en Access;
-      normalizar_columnas() se encarga de mapearlos al estándar.
-    """
-    try:
-        import pyodbc
-        conn_str = f"DRIVER={{Microsoft Access Driver (*.mdb, *.accdb)}};DBQ={ruta};"
-        con = pyodbc.connect(conn_str)
-        try:
-            cursor = con.cursor()
-            cursor.execute(query)
-            columnas = [desc[0] for desc in cursor.description]
-            filas    = cursor.fetchall()
-            return pd.DataFrame.from_records(filas, columns=columnas)
-        finally:
-            con.close()
-    except ImportError:
-        raise RuntimeError("pyodbc no está instalado. Ejecuta: pip install pyodbc")
-    except Exception as e:
-        raise RuntimeError(f"Error al conectar con Access: {e}")
+#def cargar_desde_access(ruta: str, query: str) -> pd.DataFrame:
+#    """
+#    Lee Access usando el cursor directamente.
+#    - Evita el UserWarning de pandas con conexiones DBAPI2.
+#    - Los nombres de columna se toman tal cual están en Access;
+#      normalizar_columnas() se encarga de mapearlos al estándar.
+#    """
+#    try:
+#        import pyodbc
+#        conn_str = f"DRIVER={{Microsoft Access Driver (*.mdb, *.accdb)}};DBQ={ruta};"
+#        con = pyodbc.connect(conn_str)
+#        try:
+#            cursor = con.cursor()
+#            cursor.execute(query)
+#            columnas = [desc[0] for desc in cursor.description]
+#            filas    = cursor.fetchall()
+#            return pd.DataFrame.from_records(filas, columns=columnas)
+#        finally:
+#            con.close()
+#    except ImportError:
+#        raise RuntimeError("pyodbc no está instalado. Ejecuta: pip install pyodbc")
+#    except Exception as e:
+#       raise RuntimeError(f"Error al conectar con Access: {e}")
 
 
 import urllib.parse  # Agrega esta importación al inicio de tu archivo
