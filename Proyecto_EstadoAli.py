@@ -192,8 +192,6 @@ with st.sidebar:
     if st.button("🔄 Recargar Datos"):
         st.session_state.snapshot = None
         st.cache_resource.clear()
-<<<<<<< HEAD
+
         st.rerun()
-=======
-        st.rerun()
->>>>>>> c25ce27e2be7f548fca5aa0a3df359cb82e09969
+
