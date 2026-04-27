@@ -4,11 +4,12 @@ import io
 import psycopg2
 
 conn = psycopg2.connect(
-    host=st.secrets["DB_HOST"],
-    user=st.secrets["DB_USER"],
-    password=st.secrets["DB_PASSWORD"],
-    database=st.secretrs["DB_NAME"],
-    port=st.secrets["DB_PORT"]
+    host=st.secrets["PG_HOST"],
+    user=st.secrets["PG_USER"],
+    password=st.secrets["PG_PASSWORD"],
+    database=st.secrets["PG_DATABASE"],
+    port=st.secrets["PG_PORT"],
+    sslmode="require"
 )
 # ─────────────────────────────────────────────
 #  CONFIG
