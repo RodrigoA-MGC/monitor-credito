@@ -58,6 +58,10 @@ COLUMNAS_REQUERIDAS = {
 # ─────────────────────────────────────────────
 
 def cargar_desde_postgresql(host, puerto, bd, usuario, password, query) -> pd.DataFrame:
+    """
+    Conecta a Supabase usando psycopg2 con cursor directo.
+    Evita el warning de pandas y es compatible con pgBouncer pooler.
+    """
     import psycopg2
     conn = psycopg2.connect(
         host=host,
@@ -69,10 +73,13 @@ def cargar_desde_postgresql(host, puerto, bd, usuario, password, query) -> pd.Da
         connect_timeout=15,
     )
     try:
-        df = pd.read_sql(query, conn)
+        cursor = conn.cursor()
+        cursor.execute(query)
+        columnas = [desc[0] for desc in cursor.description]
+        filas = cursor.fetchall()
+        return pd.DataFrame.from_records(filas, columns=columnas)
     finally:
         conn.close()
-    return df
 
 
 def cargar_desde_csv(archivo) -> pd.DataFrame:
