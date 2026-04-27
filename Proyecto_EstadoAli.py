@@ -3,6 +3,7 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, text, pool
 
+st.write("🚀 App iniciando...")
 # ─────────────────────────────────────────────
 # 1. CONFIG
 # ─────────────────────────────────────────────
