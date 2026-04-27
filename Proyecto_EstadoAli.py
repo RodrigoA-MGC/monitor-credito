@@ -89,18 +89,24 @@ def cargar_desde_access(ruta: str, query: str) -> pd.DataFrame:
         raise RuntimeError(f"Error al conectar con Access: {e}")
 
 
+import urllib.parse  # Agrega esta importación al inicio de tu archivo
+
 def cargar_desde_postgresql(host, puerto, bd, usuario, password, query) -> pd.DataFrame:
     try:
         from sqlalchemy import create_engine, text
-        url = f"postgresql+psycopg2://{usuario}:{password}@{host}:{puerto}/{bd}"
+        
+        # 1. Limpiamos el usuario y la contraseña para que caracteres como '$' no rompan la URL
+        user_encoded = urllib.parse.quote_plus(usuario)
+        pass_encoded = urllib.parse.quote_plus(password)
+        
+        # 2. Construimos la URL con los datos limpios
+        url = f"postgresql+psycopg2://{user_encoded}:{pass_encoded}@{host}:{puerto}/{bd}?sslmode=require"
+        
         engine = create_engine(url)
         with engine.connect() as con:
             return pd.read_sql(text(query), con)
-    except ImportError:
-        raise RuntimeError("Instala: pip install psycopg2-binary sqlalchemy")
     except Exception as e:
         raise RuntimeError(f"Error PostgreSQL: {e}")
-
 
 # ─────────────────────────────────────────────
 #  TRANSFORMACIÓN — PIPELINE DE NEGOCIO
