@@ -1,0 +1,17 @@
+# Archivos con credenciales — NUNCA subir a GitHub
+.env
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs del sync
+sync_log.txt
+
+# Excel y Access locales
+*.accdb
+*.mdb
+*.xlsx
+*.xls
