@@ -1,17 +1,20 @@
 import io
 import pandas as pd
 import streamlit as st
-import urllib.parse
 from sqlalchemy import create_engine, text, pool
 
-# 1. CONFIGURACIÓN (Debe ser lo primero)
+# ─────────────────────────────────────────────
+# 1. CONFIG
+# ─────────────────────────────────────────────
 st.set_page_config(
     page_title="Monitor de Crédito",
     page_icon="📊",
     layout="wide",
 )
 
+# ─────────────────────────────────────────────
 # 2. CONSTANTES
+# ─────────────────────────────────────────────
 CONDICIONES_CREDITO   = {"CP008", "CP15", "CP20", "CP25", "CP30", "CP45"}
 CONDICION_EXCEPCION   = {"CP45"}
 CONDICION_ANTICIPADO  = {"CP00"}
@@ -25,93 +28,155 @@ PRIORIDAD_ESTATUS = {
 }
 
 COLS_NUM = ["Saldo vencido", "Saldo por vencer", "Anticipos", "Depósitos SAP", "Límite de credito"]
-COLUMNAS_REQUERIDAS = ["Cliente", "Destinatario mercancia", "Condiciones de pago", "Nombre 1", "fecha"] + COLS_NUM
 
-# 3. FUNCIONES DE CARGA Y CONECTORES
-def cargar_desde_postgresql(host, puerto, bd, usuario, password, query) -> pd.DataFrame:
+COLUMNAS_REQUERIDAS = [
+    "Cliente", "Destinatario mercancia", "Condiciones de pago",
+    "Nombre 1", "fecha"
+] + COLS_NUM
+
+# ─────────────────────────────────────────────
+# 3. CONEXIÓN A POSTGRESQL (SUPABASE)
+# ─────────────────────────────────────────────
+@st.cache_resource
+def get_engine():
+    return create_engine(
+        st.secrets["DATABASE_URL"],
+        poolclass=pool.NullPool,
+        connect_args={"sslmode": "require"}
+    )
+
+def cargar_desde_postgresql(query) -> pd.DataFrame:
     try:
-        user_encoded = urllib.parse.quote_plus(usuario)
-        pass_encoded = urllib.parse.quote_plus(password)
-        url = f"postgresql+psycopg2://{user_encoded}:{pass_encoded}@{host}:{puerto}/{bd}?sslmode=require"
-        engine = create_engine(url, poolclass=pool.NullPool)
+        engine = get_engine()
         with engine.connect() as con:
             df = pd.read_sql(text(query), con)
-            # Mapeo de nombres de base de datos a nombres de App
+
+            # Mapear nombres DB → App
             column_map = {
-                'cliente': 'Cliente', 'destinatario_mercancia': 'Destinatario mercancia',
-                'condiciones_de_pago': 'Condiciones de pago', 'nombre_1': 'Nombre 1',
-                'fecha': 'fecha', 'saldo_vencido': 'Saldo vencido',
-                'saldo_por_vencer': 'Saldo por vencer', 'anticipos': 'Anticipos',
-                'depositos_sap': 'Depósitos SAP', 'limite_de_credito': 'Límite de credito'
+                'cliente': 'Cliente',
+                'destinatario_mercancia': 'Destinatario mercancia',
+                'condiciones_pago': 'Condiciones de pago',
+                'nombre': 'Nombre 1',
+                'fecha': 'fecha',
+                'saldo_vencido': 'Saldo vencido',
+                'saldo_por_vencer': 'Saldo por vencer',
+                'anticipos': 'Anticipos',
+                'depositos_sap': 'Depósitos SAP',
+                'limite_credito': 'Límite de credito'
             }
+
             return df.rename(columns={k: v for k, v in column_map.items() if k in df.columns})
+
     except Exception as e:
         raise RuntimeError(f"Error en PostgreSQL: {e}")
 
+# ─────────────────────────────────────────────
+# 4. LIMPIEZA DE DATOS
+# ─────────────────────────────────────────────
 def normalizar_columnas(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
+
     for c in COLS_NUM:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+
     for c in ["Cliente", "Destinatario mercancia", "Condiciones de pago", "Nombre 1"]:
         if c in df.columns:
             df[c] = df[c].astype(str).str.strip()
+
     return df
 
-# 4. LÓGICA DE NEGOCIO
+# ─────────────────────────────────────────────
+# 5. LÓGICA DE NEGOCIO
+# ─────────────────────────────────────────────
 def transformar(df: pd.DataFrame):
     df = df.copy()
+
     df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce")
-    df = df.dropna(subset=["fecha"]).sort_values(["Cliente", "Destinatario mercancia", "fecha"])
-    
-    # Calcular indicadores
+    df = df.dropna(subset=["fecha"]).sort_values(
+        ["Cliente", "Destinatario mercancia", "fecha"]
+    )
+
     activos = df["Anticipos"] + df["Depósitos SAP"]
+
     df["Sobregiro"] = 0.0
     df["Incumplimiento"] = 0.0
-    
-    mask_cred = df["Condiciones de pago"].isin(CONDICIONES_CREDITO)
-    df.loc[mask_cred, "Sobregiro"] = (df["Saldo vencido"] + df["Saldo por vencer"]) - activos
-    df.loc[mask_cred, "Incumplimiento"] = df["Saldo vencido"] - activos
-    df["Uso_vs_Limite"] = (df["Saldo vencido"] + df["Saldo por vencer"]) - df["Límite de credito"]
 
-    # Estatus
+    mask_cred = df["Condiciones de pago"].isin(CONDICIONES_CREDITO)
+
+    df.loc[mask_cred, "Sobregiro"] = (
+        df["Saldo vencido"] + df["Saldo por vencer"]
+    ) - activos
+
+    df.loc[mask_cred, "Incumplimiento"] = (
+        df["Saldo vencido"] - activos
+    )
+
+    df["Uso_vs_Limite"] = (
+        df["Saldo vencido"] + df["Saldo por vencer"]
+    ) - df["Límite de credito"]
+
     def _est(row):
         c = row["Condiciones de pago"]
-        if c in CONDICIONES_INACTIVO: return "⚫ Inactivo"
-        if c in CONDICION_RECLAMACION: return "🟣 Reclamación"
-        if row["Sobregiro"] > 0.01: return "🔴 Suspendido"
+
+        if c in CONDICIONES_INACTIVO:
+            return "⚫ Inactivo"
+        if c in CONDICION_RECLAMACION:
+            return "🟣 Reclamación"
+        if row["Sobregiro"] > 0.01:
+            return "🔴 Suspendido"
+
         return "🟢 Activo"
 
     df["Estatus"] = df.apply(_est, axis=1)
-    snapshot = df.groupby(["Cliente", "Destinatario mercancia"]).last().reset_index()
+
+    snapshot = (
+        df.groupby(["Cliente", "Destinatario mercancia"])
+        .last()
+        .reset_index()
+    )
+
     return snapshot, df
 
 def resumen_por_cliente(snapshot):
-    return snapshot.groupby("Cliente").agg({
-        "Nombre 1": "first", "Saldo vencido": "sum", "Sobregiro": "sum", "Estatus": "last"
-    }).reset_index()
+    return (
+        snapshot.groupby("Cliente")
+        .agg({
+            "Nombre 1": "first",
+            "Saldo vencido": "sum",
+            "Sobregiro": "sum",
+            "Estatus": "last"
+        })
+        .reset_index()
+    )
 
-# 5. UI Y MAIN
+# ─────────────────────────────────────────────
+# 6. MAIN
+# ─────────────────────────────────────────────
 if "snapshot" not in st.session_state:
     st.session_state.update({"snapshot": None, "historico": None})
 
-# Carga automática desde secretos
+# Carga automática
 if st.session_state.snapshot is None:
     try:
-        raw = cargar_desde_postgresql(st.secrets["PG_HOST"], st.secrets["PG_PORT"], 
-                                    st.secrets["PG_DATABASE"], st.secrets["PG_USER"], 
-                                    st.secrets["PG_PASSWORD"], "SELECT * FROM historico_monitor")
-        st.session_state.snapshot, st.session_state.historico = transformar(normalizar_columnas(raw))
+        raw = cargar_desde_postgresql("SELECT * FROM historico_monitor")
+        st.session_state.snapshot, st.session_state.historico = transformar(
+            normalizar_columnas(raw)
+        )
     except Exception as e:
-        st.error(f"Error de conexión: {e}")
+        st.error(f"❌ Error de conexión: {e}")
         st.stop()
 
-# INTERFAZ
+# ─────────────────────────────────────────────
+# 7. UI
+# ─────────────────────────────────────────────
 st.title("📊 Monitor de Crédito")
+
 df_cli = resumen_por_cliente(st.session_state.snapshot)
 
 k1, k2, k3 = st.columns(3)
+
 k1.metric("Clientes", len(df_cli))
 k2.metric("Sobregiro Total", f"${df_cli['Sobregiro'].sum():,.2f}")
 k3.metric("Estatus", "Conectado ✅")
@@ -119,9 +184,11 @@ k3.metric("Estatus", "Conectado ✅")
 st.subheader("Listado de Clientes")
 st.dataframe(df_cli, use_container_width=True)
 
-# Sidebar para filtros
+# Sidebar
 with st.sidebar:
     st.header("Opciones")
+
     if st.button("🔄 Recargar Datos"):
         st.session_state.snapshot = None
+        st.cache_resource.clear()
         st.rerun()
