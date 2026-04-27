@@ -3,14 +3,23 @@ import pandas as pd
 import io
 import psycopg2
 
-conn = psycopg2.connect(
-    host=st.secrets["PG_HOST"],
-    user=st.secrets["PG_USER"],
-    password=st.secrets["PG_PASSWORD"],
-    database=st.secrets["PG_DATABASE"],
-    port=st.secrets["PG_PORT"],
-    sslmode="require"
-)
+import streamlit as st
+
+st.write("Intentando conectar...")
+
+try:
+    conn = psycopg2.connect(
+        host=st.secrets["PG_HOST"],
+        user=st.secrets["PG_USER"],
+        password=st.secrets["PG_PASSWORD"],
+        database=st.secrets["PG_DATABASE"],
+        port=int(st.secrets["PG_PORT"]),
+        sslmode="require"
+    )
+    st.success("✅ Conectado correctamente")
+except Exception as e:
+    st.error(f"❌ Error: {e}")
+
 # ─────────────────────────────────────────────
 #  CONFIG
 # ─────────────────────────────────────────────
