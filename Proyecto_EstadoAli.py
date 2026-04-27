@@ -67,7 +67,7 @@ def cargar_desde_postgresql(host, puerto, bd, usuario, password, query) -> pd.Da
         user=usuario,
         password=password,
         sslmode="require",
-        connect_timeout=15,
+        connect_timeout=30,
     )
     try:
         cursor = conn.cursor()
