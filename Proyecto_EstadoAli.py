@@ -121,23 +121,27 @@ def normalizar_columnas(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = [str(c).strip() for c in df.columns]
 
     # Mapa de nombres normalizados (sin acentos) → nombre estándar
-    _norm = lambda s: (
+    import re
+
+    _norm = lambda s: re.sub(
+        r'[^a-z0-9]+', '_',  # 🔥 convierte TODO a formato tipo postgres
         s.lower()
         .replace("á","a").replace("é","e").replace("í","i")
         .replace("ó","o").replace("ú","u").replace("ñ","n")
-    )
+    ).strip('_')
+    
     mapeo_normalizado = {
-        _norm("Destinatario mercancia"): "Destinatario mercancia",
-        _norm("Condiciones de pago"):        "Condiciones de pago",
-        _norm("Nombre 1"):                   "Nombre 1",
-        _norm("Saldo vencido"):              "Saldo vencido",
-        _norm("Saldo por vencer"):           "Saldo por vencer",
-        _norm("Anticipos"):                  "Anticipos",
-        _norm("Depósitos SAP"):              "Depósitos SAP",
-        _norm("Límite de credito"):          "Límite de credito",
-        _norm("fecha"):                      "fecha",
-        _norm("Cliente"):                    "Cliente",
-    }
+    "destinatario_mercancia": "Destinatario mercancia",
+    "condiciones_pago": "Condiciones de pago",
+    "nombre": "Nombre 1",
+    "saldo_vencido": "Saldo vencido",
+    "saldo_por_vencer": "Saldo por vencer",
+    "anticipos": "Anticipos",
+    "depositos_sap": "Depósitos SAP",
+    "limite_credito": "Límite de credito",
+    "fecha": "fecha",
+    "cliente": "Cliente",
+}
 
     rename = {}
     for col in df.columns:
@@ -488,9 +492,19 @@ def mostrar_ficha_cliente(
 #  CONFIGURACION DE CARGA AUTOMATICA
 #  Edita estos valores para tu entorno.
 #  Si AUTOLOAD_RUTA esta vacio, la carga automatica se desactiva.
-# ─────────────────────────────────────────────
-AUTOLOAD_RUTA  = r'C:\Users\rodrigo.vazquez\Desktop\Ali\Versiones Access\Credito361 Ali A3.accdb'
-AUTOLOAD_QUERY = "SELECT * FROM [Historico_Monitor]"
+# ──────(Access)───────────────────────────────────────
+# AUTOLOAD_RUTA  = r'C:\Users\rodrigo.vazquez\Desktop\Ali\Versiones Access\Credito361 Ali A3.accdb'
+# AUTOLOAD_QUERY = "SELECT * FROM [Historico_Monitor]"
+# ── PostgreSQL (fuente principal ahora) ──────
+PG_HOST     = "localhost"        # lo que tienes en tu .env
+PG_PUERTO   = "5432"
+PG_BD       = "monitor_credito"
+PG_USUARIO  = "postgres"
+PG_PASSWORD = "Rayman123$"
+PG_TABLA    = "historico_monitor"
+
+AUTOLOAD_RUTA  = ""   # <-- vacío apaga el autoload de Access
+AUTOLOAD_QUERY = f"SELECT * FROM {PG_TABLA}"
 AUTOLOAD_TIPO_CLIENTE = r'C:\Users\rodrigo.vazquez\MGI Asistencia Integral\Analisis de Datos - Documentos\Tipo de Cliente\Tipo de Cliente.xlsx'
 
 # ─────────────────────────────────────────────
@@ -500,20 +514,36 @@ for key in ("snapshot", "historico", "fuente_activa", "tipo_cliente_df"):
     if key not in st.session_state:
         st.session_state[key] = None
 
-# ── Carga automatica al iniciar (solo si aun no hay datos) ──────────────
-if st.session_state.snapshot is None and AUTOLOAD_RUTA:
-    with st.spinner("Cargando datos desde Access..."):
+# ── Carga automatica al iniciar (solo si aun no hay datos (Access)) ──────────────
+# if st.session_state.snapshot is None and AUTOLOAD_RUTA:
+#    with st.spinner("Cargando datos desde Access..."):
+#        try:
+#            df_raw = cargar_desde_access(AUTOLOAD_RUTA, AUTOLOAD_QUERY)
+#            faltantes = validar_columnas(df_raw)
+#            if not faltantes:
+#               st.session_state.snapshot, st.session_state.historico = transformar(df_raw)
+#                st.session_state.fuente_activa = "Access (auto)"
+#            else:
+#                st.warning(f"Autoload: columnas faltantes {faltantes}")
+#        except Exception as e:
+#            st.warning(f"Autoload Access no disponible: {e}")
+if st.session_state.snapshot is None:
+    with st.spinner("Cargando datos desde PostgreSQL..."):
         try:
-            df_raw = cargar_desde_access(AUTOLOAD_RUTA, AUTOLOAD_QUERY)
+            df_raw = cargar_desde_postgresql(
+                PG_HOST, PG_PUERTO, PG_BD, PG_USUARIO, PG_PASSWORD, AUTOLOAD_QUERY
+            )
+            # 🔥 NORMALIZA PRIMERO
+            df_raw = normalizar_columnas(df_raw)
+
             faltantes = validar_columnas(df_raw)
             if not faltantes:
                 st.session_state.snapshot, st.session_state.historico = transformar(df_raw)
-                st.session_state.fuente_activa = "Access (auto)"
+                st.session_state.fuente_activa = "PostgreSQL (auto)"
             else:
                 st.warning(f"Autoload: columnas faltantes {faltantes}")
         except Exception as e:
-            st.warning(f"Autoload Access no disponible: {e}")
-
+            st.warning(f"Autoload PostgreSQL no disponible: {e}")
     # Carga automatica del complementario Tipo de Cliente
     if AUTOLOAD_TIPO_CLIENTE and st.session_state.tipo_cliente_df is None:
         try:
@@ -638,6 +668,11 @@ with st.sidebar:
                 st.error(str(e))
 
     # ── Boton de recarga manual (Access) ─────
+    if st.button("🔄 Recargar desde PostgreSQL", use_container_width=True, key="btn_refresh_pg"):
+        st.session_state.snapshot  = None
+        st.session_state.historico = None
+        st.session_state.fuente_activa = None
+        st.rerun()
     if st.session_state.fuente_activa and "Access" in str(st.session_state.fuente_activa):
         if st.button("🔄 Recargar datos ahora", use_container_width=True, key="btn_refresh"):
             st.session_state.snapshot  = None
