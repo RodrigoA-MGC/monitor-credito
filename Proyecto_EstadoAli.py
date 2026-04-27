@@ -58,7 +58,11 @@ COLUMNAS_REQUERIDAS = {
 # ─────────────────────────────────────────────
 
 def cargar_desde_postgresql(host, puerto, bd, usuario, password, query) -> pd.DataFrame:
-    """Conecta a PostgreSQL/Supabase con SSL y password URL-safe."""
+    """
+    Conecta a PostgreSQL/Supabase con SSL y password URL-safe.
+    Pooler mode (puerto 6543): deshabilita prepared statements para
+    evitar errores de pgBouncer en transaction mode.
+    """
     user_enc = urllib.parse.quote_plus(str(usuario))
     pass_enc = urllib.parse.quote_plus(str(password))
     url = (
@@ -69,6 +73,8 @@ def cargar_desde_postgresql(host, puerto, bd, usuario, password, query) -> pd.Da
         url,
         pool_pre_ping=True,
         connect_args={"connect_timeout": 15},
+        # Requerido para Supabase pooler (pgBouncer transaction mode)
+        execution_options={"prepared_statement_cache_size": 0},
     )
     with engine.connect() as con:
         return pd.read_sql(text(query), con)
