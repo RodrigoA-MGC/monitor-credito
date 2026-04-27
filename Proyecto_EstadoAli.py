@@ -161,7 +161,7 @@ try:
     # Carga automática
     if st.session_state.snapshot is None:
         try:
-            raw = cargar_desde_postgresql("SELECT * FROM historico_monitor")
+            raw = cargar_desde_postgresql("SELECT * FROM historico_monitor LIMIT 5000")
             st.session_state.snapshot, st.session_state.historico = transformar(
                 normalizar_columnas(raw)
             )
