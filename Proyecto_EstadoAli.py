@@ -56,65 +56,48 @@ COLUMNAS_REQUERIDAS = {
 # ─────────────────────────────────────────────
 
 def cargar_desde_postgresql(host, puerto, bd, usuario, password, query) -> pd.DataFrame:
-    """
-    Conecta a Supabase/PostgreSQL usando psycopg2 cursor directo.
-    Compatible con pgBouncer pooler (Supabase puerto 6543).
-    """
-    conn = psycopg2.connect(
-        host=host,
-        port=int(puerto),
-        dbname=bd,
-        user=usuario,
-        password=password,
-        sslmode="require",
-        connect_timeout=30,
-    )
     try:
-        cursor = conn.cursor()
-        cursor.execute(query)
-        columnas = [desc[0] for desc in cursor.description]
-        filas = cursor.fetchall()
-        return pd.DataFrame.from_records(filas, columns=columnas)
-    finally:
-        conn.close()
-
-
-def cargar_desde_csv(archivo) -> pd.DataFrame:
-    return pd.read_csv(archivo)
-
-
-def cargar_desde_excel(archivo, hoja) -> pd.DataFrame:
-    return pd.read_excel(archivo, sheet_name=hoja)
-
-
-# ─────────────────────────────────────────────
-#  NORMALIZACIÓN DE COLUMNAS
-#  Mapea nombres que vienen de PostgreSQL (snake_case)
-#  al nombre estándar que usa el resto del código.
-# ─────────────────────────────────────────────
-MAPEO_COLUMNAS = {
-    # Nombres exactos que vienen de PostgreSQL (snake_case)
-    "cliente":                "Cliente",
-    "destinatario_mercancia": "Destinatario mercancia",
-    "condiciones_pago":       "Condiciones de pago",
-    "nombre":                 "Nombre 1",
-    "nombre_1":               "Nombre 1",
-    "saldo_vencido":          "Saldo vencido",
-    "saldo_por_vencer":       "Saldo por vencer",
-    "anticipos":              "Anticipos",
-    "depositos_sap":          "Depósitos SAP",
-    "limite_credito":         "Límite de credito",
-    "fecha":                  "fecha",
-    # Variantes con espacios por si acaso
-    "destinatario mercancia": "Destinatario mercancia",
-    "condiciones de pago":    "Condiciones de pago",
-    "saldo vencido":          "Saldo vencido",
-    "saldo por vencer":       "Saldo por vencer",
-    "depositos sap":          "Depósitos SAP",
-    "limite de credito":      "Límite de credito",
-    "limite_de_credito":      "Límite de credito",
-}
-
+        from sqlalchemy import create_engine, text, pool
+        import urllib.parse
+        
+        # 1. Limpieza de credenciales
+        user_encoded = urllib.parse.quote_plus(usuario)
+        pass_encoded = urllib.parse.quote_plus(password)
+        
+        # 2. URL de conexión
+        url = f"postgresql+psycopg2://{user_encoded}:{pass_encoded}@{host}:{puerto}/{bd}?sslmode=require"
+        
+        # 3. CREAR MOTOR CON NULLPOOL (Vital para el Pooler de Supabase)
+        # Esto obliga a cerrar la conexión inmediatamente después de usarla,
+        # evitando el error de "Prepared Statement" del Pooler.
+        engine = create_engine(url, poolclass=pool.NullPool)
+        
+        with engine.connect() as con:
+            df = pd.read_sql(text(query), con)
+            
+            # --- CORRECCIÓN DE MAPE DE COLUMNAS ---
+            # Forzamos nombres estándar para que coincidan con tu lógica de negocio
+            # Mapeo: "nombre_en_postgres": "NombreEsperadoPorTuCodigo"
+            column_map = {
+                'cliente': 'Cliente',
+                'destinatario_mercancia': 'Destinatario mercancia',
+                'condiciones_de_pago': 'Condiciones de pago',
+                'nombre_1': 'Nombre 1',
+                'fecha': 'fecha',
+                'saldo_vencido': 'Saldo vencido',
+                'saldo_por_vencer': 'Saldo por vencer',
+                'anticipos': 'Anticipos',
+                'depositos_sap': 'Depósitos SAP',
+                'limite_de_credito': 'Límite de credito'
+            }
+            
+            # Renombramos solo las que existan en el DF (para evitar errores)
+            df = df.rename(columns={k: v for k, v in column_map.items() if k in df.columns})
+            
+            return df
+            
+    except Exception as e:
+        raise RuntimeError(f"Error crítico en PostgreSQL: {e}")
 
 def _norm_key(s: str) -> str:
     s = str(s).strip().lower()
