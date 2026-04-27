@@ -5,7 +5,9 @@ import psycopg2
 import urllib.parse
 from sqlalchemy import create_engine, text
 
-# 1. CONFIGURACIÓN (SIEMPRE PRIMERO)
+# ─────────────────────────────────────────────
+#  1. CONFIGURACIÓN (UNICA Y AL PRINCIPIO)
+# ─────────────────────────────────────────────
 st.set_page_config(
     page_title="Monitor de credito",
     page_icon="📊",
@@ -13,61 +15,48 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.write("Intentando conectar...")
+# Título visual para saber que la app cargó
+st.title("📊 Monitor de Crédito")
 
-# 2. PRUEBA DE CONEXIÓN ÚNICA
+# ─────────────────────────────────────────────
+#  2. PRUEBA DE CONEXIÓN
+# ─────────────────────────────────────────────
+st.write("Conectando con Supabase...")
+
 try:
-    # Usamos urllib para manejar caracteres especiales como '$'
+    # Codificamos credenciales para evitar errores con caracteres especiales ($)
     user_encoded = urllib.parse.quote_plus(st.secrets["PG_USER"])
     pass_encoded = urllib.parse.quote_plus(st.secrets["PG_PASSWORD"])
     
-    # URL de conexión construida correctamente
     conn_str = f"postgresql://{user_encoded}:{pass_encoded}@{st.secrets['PG_HOST']}:{st.secrets['PG_PORT']}/{st.secrets['PG_DATABASE']}?sslmode=require"
     
-    # Prueba rápida
+    # Prueba rápida de conexión
     conn = psycopg2.connect(conn_str, connect_timeout=10)
-    st.success("✅ Conectado correctamente")
+    st.success("✅ Conexión establecida")
     conn.close()
 except Exception as e:
     st.error(f"❌ Error de conexión: {e}")
-    st.stop() # Si falla, aquí se detiene la app para no mostrar errores feos abajo
+    st.stop() 
 
 # ─────────────────────────────────────────────
-# 3. EL RESTO DE TU CÓDIGO (CONSTANTES, FUNCIONES, ETC.)
-# ─────────────────────────────────────────────
-
-# ─────────────────────────────────────────────
-#  CONFIG
-# ─────────────────────────────────────────────
-st.set_page_config(
-    page_title="Monitor de credito",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-# ─────────────────────────────────────────────
-#  CONSTANTES DE NEGOCIO
+#  3. CONSTANTES DE NEGOCIO (ELIMINÉ EL CONFIG REPETIDO)
 # ─────────────────────────────────────────────
 CONDICIONES_CREDITO  = {"CP008", "CP15", "CP20", "CP25", "CP30", "CP45"}
-CONDICION_EXCEPCION  = {"CP45"}       # Opera aunque tenga sobregiro/incumplimiento
+CONDICION_EXCEPCION  = {"CP45"} 
 CONDICION_ANTICIPADO = {"CP00"}
 CONDICIONES_INACTIVO = {"MG01", "MG02", "MG03", "MG04", "MG06", "0001"}
 CONDICION_CRA        = {"CRA"}
 CONDICION_RECLAMACION = {"MG05"}
 
-# Prioridad para determinar el "peor estatus" de un cliente central
-# (cuando tiene varios destinatarios con distintos estatus)
 PRIORIDAD_ESTATUS = {
     "🔴 Suspendido":         0,
-    "🟣 Reclamación":        1,
+    "🟣 Reclamación":         1,
     "🟠 Activo (Excepción)": 2,
     "🔵 CRA":                3,
     "⚫ Inactivo":           4,
     "🟢 Activo":             5,
     "⚪ Sin clasificar":     6,
 }
-
 # ─────────────────────────────────────────────
 #  CONECTORES
 # ─────────────────────────────────────────────
