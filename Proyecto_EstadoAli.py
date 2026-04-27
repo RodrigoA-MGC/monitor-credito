@@ -58,20 +58,21 @@ COLUMNAS_REQUERIDAS = {
 # ─────────────────────────────────────────────
 
 def cargar_desde_postgresql(host, puerto, bd, usuario, password, query) -> pd.DataFrame:
-    """Conecta a PostgreSQL/Supabase con SSL y password URL-safe."""
-    user_enc = urllib.parse.quote_plus(str(usuario))
-    pass_enc = urllib.parse.quote_plus(str(password))
-    url = (
-        f"postgresql+psycopg2://{user_enc}:{pass_enc}"
-        f"@{host}:{puerto}/{bd}?sslmode=require"
+    import psycopg2
+    conn = psycopg2.connect(
+        host=host,
+        port=int(puerto),
+        dbname=bd,
+        user=usuario,
+        password=password,
+        sslmode="require",
+        connect_timeout=15,
     )
-    engine = create_engine(
-        url,
-        pool_pre_ping=True,
-        connect_args={"connect_timeout": 15},
-    )
-    with engine.connect() as con:
-        return pd.read_sql(text(query), con)
+    try:
+        df = pd.read_sql(query, conn)
+    finally:
+        conn.close()
+    return df
 
 
 def cargar_desde_csv(archivo) -> pd.DataFrame:
