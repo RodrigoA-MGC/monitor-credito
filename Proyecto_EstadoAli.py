@@ -1,200 +1,155 @@
-
 import io
 import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, text, pool
-try:
-    # 👇 PRIMERO SIEMPRE
-    st.set_page_config(
+
+# ─────────────────────────────────────────────
+# CONFIG (PRIMERO SIEMPRE)
+# ─────────────────────────────────────────────
+st.set_page_config(
     page_title="Monitor de Crédito",
     page_icon="📊",
     layout="wide",
+)
+
+st.title("📊 Monitor de Crédito")
+
+# ─────────────────────────────────────────────
+# CONEXIÓN
+# ─────────────────────────────────────────────
+@st.cache_resource
+def get_engine():
+    return create_engine(
+        st.secrets["DATABASE_URL"],
+        poolclass=pool.NullPool,
+        connect_args={"sslmode": "require"}
     )
 
-    # 👇 DESPUÉS ya puedes usar st.*
-    st.write("🚀 App iniciando...")
-    # ─────────────────────────────────────────────
-    # 2. CONSTANTES
-    # ─────────────────────────────────────────────
-    CONDICIONES_CREDITO   = {"CP008", "CP15", "CP20", "CP25", "CP30", "CP45"}
-    CONDICION_EXCEPCION   = {"CP45"}
-    CONDICION_ANTICIPADO  = {"CP00"}
-    CONDICIONES_INACTIVO  = {"MG01", "MG02", "MG03", "MG04", "MG06", "0001"}
-    CONDICION_CRA         = {"CRA"}
-    CONDICION_RECLAMACION = {"MG05"}
+# ─────────────────────────────────────────────
+# SNAPSHOT (rápido)
+# ─────────────────────────────────────────────
+@st.cache_data(ttl=600)
+def cargar_snapshot():
+    query = """
+    SELECT DISTINCT ON (cliente, destinatario_mercancia)
+        cliente,
+        destinatario_mercancia,
+        nombre,
+        condiciones_pago,
+        fecha,
+        saldo_vencido,
+        saldo_por_vencer,
+        anticipos,
+        depositos_sap,
+        limite_credito
+    FROM historico_monitor
+    ORDER BY cliente, destinatario_mercancia, fecha DESC
+    """
 
-    PRIORIDAD_ESTATUS = {
-        "🔴 Suspendido": 0, "🟣 Reclamación": 1, "🟠 Activo (Excepción)": 2,
-        "🔵 CRA": 3, "⚫ Inactivo": 4, "🟢 Activo": 5, "⚪ Sin clasificar": 6,
-    }
+    engine = get_engine()
+    with engine.connect() as con:
+        df = pd.read_sql(text(query), con)
 
-    COLS_NUM = ["Saldo vencido", "Saldo por vencer", "Anticipos", "Depósitos SAP", "Límite de credito"]
+    return df
 
-    COLUMNAS_REQUERIDAS = [
-        "Cliente", "Destinatario mercancia", "Condiciones de pago",
-        "Nombre 1", "fecha"
-    ] + COLS_NUM
+# ─────────────────────────────────────────────
+# HISTÓRICO POR CLIENTE (on demand)
+# ─────────────────────────────────────────────
+@st.cache_data(ttl=300)
+def cargar_historico_cliente(cliente):
+    query = f"""
+    SELECT *
+    FROM historico_monitor
+    WHERE cliente = '{cliente}'
+    ORDER BY fecha DESC
+    """
 
-    # ─────────────────────────────────────────────
-    # 3. CONEXIÓN A POSTGRESQL (SUPABASE)
-    # ─────────────────────────────────────────────
-    @st.cache_resource
-    def get_engine():
-        return create_engine(
-            st.secrets["DATABASE_URL"],
-            poolclass=pool.NullPool,
-            connect_args={"sslmode": "require"}
-        )
+    engine = get_engine()
+    with engine.connect() as con:
+        df = pd.read_sql(text(query), con)
 
-    def cargar_desde_postgresql(query) -> pd.DataFrame:
-        try:
-            engine = get_engine()
-            with engine.connect() as con:
-                df = pd.read_sql(text(query), con)
+    return df
 
-                # Mapear nombres DB → App
-                column_map = {
-                    'cliente': 'Cliente',
-                    'destinatario_mercancia': 'Destinatario mercancia',
-                    'condiciones_pago': 'Condiciones de pago',
-                    'nombre': 'Nombre 1',
-                    'fecha': 'fecha',
-                    'saldo_vencido': 'Saldo vencido',
-                    'saldo_por_vencer': 'Saldo por vencer',
-                    'anticipos': 'Anticipos',
-                    'depositos_sap': 'Depósitos SAP',
-                    'limite_credito': 'Límite de credito'
-                }
+# ─────────────────────────────────────────────
+# LÓGICA DE NEGOCIO (ligera)
+# ─────────────────────────────────────────────
+def calcular_indicadores(df):
+    df = df.copy()
 
-                return df.rename(columns={k: v for k, v in column_map.items() if k in df.columns})
+    df["Sobregiro"] = (
+        (df["saldo_vencido"] + df["saldo_por_vencer"])
+        - (df["anticipos"] + df["depositos_sap"])
+    )
 
-        except Exception as e:
-            raise RuntimeError(f"Error en PostgreSQL: {e}")
+    df["Incumplimiento"] = (
+        df["saldo_vencido"]
+        - (df["anticipos"] + df["depositos_sap"])
+    )
 
-    # ─────────────────────────────────────────────
-    # 4. LIMPIEZA DE DATOS
-    # ─────────────────────────────────────────────
-    def normalizar_columnas(df: pd.DataFrame) -> pd.DataFrame:
-        df = df.copy()
-        df.columns = [str(c).strip() for c in df.columns]
+    return df
 
-        for c in COLS_NUM:
-            if c in df.columns:
-                df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+# ─────────────────────────────────────────────
+# CARGA INICIAL
+# ─────────────────────────────────────────────
+with st.spinner("Cargando datos..."):
+    df = cargar_snapshot()
+    df = calcular_indicadores(df)
 
-        for c in ["Cliente", "Destinatario mercancia", "Condiciones de pago", "Nombre 1"]:
-            if c in df.columns:
-                df[c] = df[c].astype(str).str.strip()
+# ─────────────────────────────────────────────
+# KPIs
+# ─────────────────────────────────────────────
+k1, k2, k3 = st.columns(3)
 
-        return df
+k1.metric("Clientes", df["cliente"].nunique())
+k2.metric("Sobregiro Total", f"${df['Sobregiro'].sum():,.2f}")
+k3.metric("Registros", len(df))
 
-    # ─────────────────────────────────────────────
-    # 5. LÓGICA DE NEGOCIO
-    # ─────────────────────────────────────────────
-    def transformar(df: pd.DataFrame):
-        df = df.copy()
+# ─────────────────────────────────────────────
+# TABLA PRINCIPAL
+# ─────────────────────────────────────────────
+st.subheader("📋 Clientes")
 
-        df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce")
-        df = df.dropna(subset=["fecha"]).sort_values(
-            ["Cliente", "Destinatario mercancia", "fecha"]
-        )
+df_clientes = (
+    df.groupby("cliente")
+    .agg(
+        nombre=("nombre", "first"),
+        sobregiro=("Sobregiro", "sum"),
+        saldo=("saldo_vencido", "sum")
+    )
+    .reset_index()
+)
 
-        activos = df["Anticipos"] + df["Depósitos SAP"]
+st.dataframe(df_clientes, use_container_width=True)
 
-        df["Sobregiro"] = 0.0
-        df["Incumplimiento"] = 0.0
+# ─────────────────────────────────────────────
+# SELECTOR CLIENTE
+# ─────────────────────────────────────────────
+st.subheader("👤 Detalle Cliente")
 
-        mask_cred = df["Condiciones de pago"].isin(CONDICIONES_CREDITO)
+cliente_sel = st.selectbox(
+    "Selecciona cliente",
+    df_clientes["cliente"]
+)
 
-        df.loc[mask_cred, "Sobregiro"] = (
-            df["Saldo vencido"] + df["Saldo por vencer"]
-        ) - activos
+# ─────────────────────────────────────────────
+# HISTÓRICO DINÁMICO
+# ─────────────────────────────────────────────
+if cliente_sel:
+    with st.spinner("Cargando histórico..."):
+        hist = cargar_historico_cliente(cliente_sel)
+        hist = calcular_indicadores(hist)
 
-        df.loc[mask_cred, "Incumplimiento"] = (
-            df["Saldo vencido"] - activos
-        )
+    st.write(f"Histórico de cliente: {cliente_sel}")
+    st.dataframe(hist, use_container_width=True)
 
-        df["Uso_vs_Limite"] = (
-            df["Saldo vencido"] + df["Saldo por vencer"]
-        ) - df["Límite de credito"]
+    # descarga
+    def to_excel(df):
+        buffer = io.BytesIO()
+        df.to_excel(buffer, index=False)
+        return buffer.getvalue()
 
-        def _est(row):
-            c = row["Condiciones de pago"]
-
-            if c in CONDICIONES_INACTIVO:
-                return "⚫ Inactivo"
-            if c in CONDICION_RECLAMACION:
-                return "🟣 Reclamación"
-            if row["Sobregiro"] > 0.01:
-                return "🔴 Suspendido"
-
-            return "🟢 Activo"
-
-        df["Estatus"] = df.apply(_est, axis=1)
-
-        snapshot = (
-            df.groupby(["Cliente", "Destinatario mercancia"])
-            .last()
-            .reset_index()
-        )
-
-        return snapshot, df
-
-    def resumen_por_cliente(snapshot):
-        return (
-            snapshot.groupby("Cliente")
-            .agg({
-                "Nombre 1": "first",
-                "Saldo vencido": "sum",
-                "Sobregiro": "sum",
-                "Estatus": "last"
-            })
-            .reset_index()
-        )
-
-    # ─────────────────────────────────────────────
-    # 6. MAIN
-    # ─────────────────────────────────────────────
-    if "snapshot" not in st.session_state:
-        st.session_state.update({"snapshot": None, "historico": None})
-
-    # Carga automática
-    if st.session_state.snapshot is None:
-        try:
-            raw = cargar_desde_postgresql("SELECT * FROM historico_monitor LIMIT 5000")
-            st.session_state.snapshot, st.session_state.historico = transformar(
-                normalizar_columnas(raw)
-            )
-        except Exception as e:
-            st.error(f"❌ Error de conexión: {e}")
-            st.stop()
-
-    # ─────────────────────────────────────────────
-    # 7. UI
-    # ─────────────────────────────────────────────
-    st.title("📊 Monitor de Crédito")
-
-    df_cli = resumen_por_cliente(st.session_state.snapshot)
-
-    k1, k2, k3 = st.columns(3)
-
-    k1.metric("Clientes", len(df_cli))
-    k2.metric("Sobregiro Total", f"${df_cli['Sobregiro'].sum():,.2f}")
-    k3.metric("Estatus", "Conectado ✅")
-
-    st.subheader("Listado de Clientes")
-    st.dataframe(df_cli, use_container_width=True)
-
-    # Sidebar
-    with st.sidebar:
-        st.header("Opciones")
-
-        if st.button("🔄 Recargar Datos"):
-            st.session_state.snapshot = None
-            st.cache_resource.clear()
-
-            st.rerun()
-
-except Exception as e:
-    st.error(f"🔥 ERROR GLOBAL: {e}")
-    raise e
+    st.download_button(
+        "📥 Descargar histórico",
+        data=to_excel(hist),
+        file_name=f"{cliente_sel}_historico.xlsx"
+    )
