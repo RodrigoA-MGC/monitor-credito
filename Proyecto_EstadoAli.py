@@ -65,14 +65,14 @@ def cargar_desde_postgresql(host, puerto, bd, usuario, password, query) -> pd.Da
             column_map = {
                 'cliente': 'Cliente',
                 'destinatario_mercancia': 'Destinatario mercancia',
-                'condiciones_de_pago': 'Condiciones de pago',
-                'nombre_1': 'Nombre 1',
+                'condiciones_pago': 'Condiciones de pago',
+                'nombre': 'Nombre 1',
                 'fecha': 'fecha',
                 'saldo_vencido': 'Saldo vencido',
                 'saldo_por_vencer': 'Saldo por vencer',
                 'anticipos': 'Anticipos',
                 'depositos_sap': 'Depósitos SAP',
-                'limite_de_credito': 'Límite de credito'
+                'limite_credito': 'Límite de credito'
             }
             df = df.rename(columns={k: v for k, v in column_map.items() if k in df.columns})
             return df
