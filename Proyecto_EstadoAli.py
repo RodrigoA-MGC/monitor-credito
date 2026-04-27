@@ -2,23 +2,39 @@ import streamlit as st
 import pandas as pd
 import io
 import psycopg2
+import urllib.parse
+from sqlalchemy import create_engine, text
 
+# 1. CONFIGURACIÓN (SIEMPRE PRIMERO)
+st.set_page_config(
+    page_title="Monitor de credito",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
 st.write("Intentando conectar...")
 
+# 2. PRUEBA DE CONEXIÓN ÚNICA
 try:
-    conn = psycopg2.connect(
-    host=st.secrets["PG_HOST"],
-    user=st.secrets["PG_USER"],
-    password=st.secrets["PG_PASSWORD"],
-    database=st.secrets["PG_DATABASE"],
-    port=int(st.secrets["PG_PORT"]),
-    sslmode="require",
-    connect_timeout=10
-)
+    # Usamos urllib para manejar caracteres especiales como '$'
+    user_encoded = urllib.parse.quote_plus(st.secrets["PG_USER"])
+    pass_encoded = urllib.parse.quote_plus(st.secrets["PG_PASSWORD"])
+    
+    # URL de conexión construida correctamente
+    conn_str = f"postgresql://{user_encoded}:{pass_encoded}@{st.secrets['PG_HOST']}:{st.secrets['PG_PORT']}/{st.secrets['PG_DATABASE']}?sslmode=require"
+    
+    # Prueba rápida
+    conn = psycopg2.connect(conn_str, connect_timeout=10)
     st.success("✅ Conectado correctamente")
+    conn.close()
 except Exception as e:
-    st.error(f"❌ Error: {e}")
+    st.error(f"❌ Error de conexión: {e}")
+    st.stop() # Si falla, aquí se detiene la app para no mostrar errores feos abajo
+
+# ─────────────────────────────────────────────
+# 3. EL RESTO DE TU CÓDIGO (CONSTANTES, FUNCIONES, ETC.)
+# ─────────────────────────────────────────────
 
 # ─────────────────────────────────────────────
 #  CONFIG
