@@ -3,19 +3,19 @@ import pandas as pd
 import io
 import psycopg2
 
-import streamlit as st
 
 st.write("Intentando conectar...")
 
 try:
     conn = psycopg2.connect(
-        host=st.secrets["PG_HOST"],
-        user=st.secrets["PG_USER"],
-        password=st.secrets["PG_PASSWORD"],
-        database=st.secrets["PG_DATABASE"],
-        port=int(st.secrets["PG_PORT"]),
-        sslmode="require"
-    )
+    host=st.secrets["PG_HOST"],
+    user=st.secrets["PG_USER"],
+    password=st.secrets["PG_PASSWORD"],
+    database=st.secrets["PG_DATABASE"],
+    port=int(st.secrets["PG_PORT"]),
+    sslmode="require",
+    connect_timeout=10
+)
     st.success("✅ Conectado correctamente")
 except Exception as e:
     st.error(f"❌ Error: {e}")
@@ -514,16 +514,25 @@ def mostrar_ficha_cliente(
 # AUTOLOAD_RUTA  = r'C:\Users\rodrigo.vazquez\Desktop\Ali\Versiones Access\Credito361 Ali A3.accdb'
 # AUTOLOAD_QUERY = "SELECT * FROM [Historico_Monitor]"
 # ── PostgreSQL (fuente principal ahora) ──────
-PG_HOST     = "localhost"        # lo que tienes en tu .env
-PG_PUERTO   = "5432"
-PG_BD       = "monitor_credito"
-PG_USUARIO  = "postgres"
-PG_PASSWORD = "Rayman123$"
-PG_TABLA    = "historico_monitor"
+# ─────────────────────────────────────────────
+#  CONFIGURACION DE CARGA AUTOMATICA (CORREGIDA)
+# ─────────────────────────────────────────────
 
-AUTOLOAD_RUTA  = ""   # <-- vacío apaga el autoload de Access
+# Ahora todo viene de st.secrets, no hay nada manual con "localhost"
+PG_HOST     = st.secrets["PG_HOST"]
+PG_PUERTO   = st.secrets.get("PG_PORT", "6543") # Si no existe, usa 6543 por defecto
+PG_BD       = st.secrets["PG_DATABASE"]
+PG_USUARIO  = st.secrets["PG_USER"]
+PG_PASSWORD = st.secrets["PG_PASSWORD"]
+PG_TABLA    = st.secrets["PG_TABLA"]
+
+AUTOLOAD_RUTA  = ""   
 AUTOLOAD_QUERY = f"SELECT * FROM {PG_TABLA}"
-AUTOLOAD_TIPO_CLIENTE = r'C:\Users\rodrigo.vazquez\MGI Asistencia Integral\Analisis de Datos - Documentos\Tipo de Cliente\Tipo de Cliente.xlsx'
+
+# Nota: Esta ruta de Excel es LOCAL. En Streamlit Cloud fallará porque 
+# el servidor de la nube no tiene acceso a tu carpeta "C:\Users\..."
+# Deberías subir ese Excel a tu GitHub y usar una ruta relativa.
+AUTOLOAD_TIPO_CLIENTE = ""
 
 # ─────────────────────────────────────────────
 #  SESSION STATE
