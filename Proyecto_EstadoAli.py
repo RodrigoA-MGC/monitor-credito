@@ -1,7 +1,15 @@
 import streamlit as st
 import pandas as pd
 import io
+import psycopg2
 
+conn = psycopg2.connect(
+    host=st.secrets["DB_HOST"],
+    user=st.secrets["DB_USER"],
+    password=st.secrets["DB_PASSWORD"],
+    database=st.secretrs["DB_NAME"],
+    port=st.secrets["DB_PORT"]
+)
 # ─────────────────────────────────────────────
 #  CONFIG
 # ─────────────────────────────────────────────
