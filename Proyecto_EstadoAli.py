@@ -55,13 +55,33 @@ def cargar_snapshot():
 # ─────────────────────────────────────────────
 # HISTÓRICO POR CLIENTE (on demand)
 # ─────────────────────────────────────────────
+# ─────────────────────────────────────────────
+# HISTÓRICO POR CLIENTE (Optimizado)
+# ─────────────────────────────────────────────
 @st.cache_data(ttl=300)
-# Cámbialo por esto para que sea más seguro:
 def cargar_historico_cliente(cliente):
-    query = text("SELECT * FROM historico_monitor WHERE cliente = :c ORDER BY fecha DESC")
+    # Seleccionamos columnas específicas para ahorrar memoria
+    query = text("""
+        SELECT 
+            cliente, 
+            destinatario_mercancia, 
+            nombre, 
+            saldo_vencido, 
+            saldo_por_vencer, 
+            anticipos, 
+            depositos_sap, 
+            limite_credito, 
+            fecha
+        FROM historico_monitor
+        WHERE cliente = :c
+        ORDER BY fecha DESC
+    """)
+
     engine = get_engine()
     with engine.connect() as con:
+        # Pasamos el parámetro de forma segura
         df = pd.read_sql(query, con, params={"c": cliente})
+
     return df
 
 # ─────────────────────────────────────────────
@@ -69,17 +89,16 @@ def cargar_historico_cliente(cliente):
 # ─────────────────────────────────────────────
 def calcular_indicadores(df):
     df = df.copy()
-
-    df["Sobregiro"] = (
-        (df["saldo_vencido"] + df["saldo_por_vencer"])
-        - (df["anticipos"] + df["depositos_sap"])
-    )
-
-    df["Incumplimiento"] = (
-        df["saldo_vencido"]
-        - (df["anticipos"] + df["depositos_sap"])
-    )
-
+    
+    # Saldo total bruto
+    df["Saldo Total"] = df["saldo_vencido"] + df["saldo_por_vencer"]
+    
+    # Cobertura de pagos
+    pagos = df["anticipos"] + df["depositos_sap"]
+    
+    df["Sobregiro"] = df["Saldo Total"] - pagos
+    df["Incumplimiento"] = df["saldo_vencido"] - pagos
+    
     return df
 
 # ─────────────────────────────────────────────
@@ -105,9 +124,8 @@ st.subheader("📋 Clientes")
 
 df_clientes = (
     df.groupby("cliente")
-    print(df.to_string(index=False))
     .agg(
-        nombre=("nombre", "first"),
+        nombre=("nombre ", "first"),
         sobregiro=("Sobregiro", "sum"),
         saldo=("saldo_vencido", "sum")
     )
