@@ -81,9 +81,9 @@ def render_calculadora(get_engine):
 
     activos = df["anticipos"] + df["depositos_sap"]
 
-    df["sobregiro"] = (df["saldo_total"] - activos).clip(lower=0)
-    df["incumplimiento"] = (df["saldo_vencido"] - activos).clip(lower=0)
-
+    df["sobregiro"] = (df["saldo_total"] - df["limite_credito"]).clip(lower=0)
+    df["incumplimiento"] = (df["saldo_vencido"] - (df["anticipos"] + df["depositos_sap"])).clip(lower=0)
+    
     df["pct_uso"] = (
         df["saldo_total"] / df["limite_credito"].replace(0, 1)
     ) * 100
@@ -106,19 +106,6 @@ def render_calculadora(get_engine):
     # ─────────────────────────────────────────
     # HISTORIAL
     # ─────────────────────────────────────────
-    st.subheader("📈 Historial")
-
-    hist = (
-        df.groupby("fecha")
-        .agg(
-            saldo_total=("saldo_total", "sum"),
-            sobregiro=("sobregiro", "sum"),
-            incumplimiento=("incumplimiento", "sum")
-        )
-        .sort_index()
-    )
-
-    st.line_chart(hist)
 
     # ─────────────────────────────────────────
     # DETALLE
@@ -128,7 +115,9 @@ def render_calculadora(get_engine):
     st.dataframe(
         snap[
             [
+                "cliente",
                 "destinatario_mercancia",
+                "condiciones_pago",
                 "saldo_vencido",
                 "saldo_por_vencer",
                 "limite_credito",
@@ -137,5 +126,6 @@ def render_calculadora(get_engine):
                 "pct_uso",
             ]
         ],
-        use_container_width=True
+        use_container_width=True,
+        hide_index=True
     )
