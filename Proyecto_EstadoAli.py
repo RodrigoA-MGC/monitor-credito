@@ -11,7 +11,12 @@ st.set_page_config(
     page_icon="📊",
     layout="wide",
 )
-
+CONDICIONES_CREDITO = {"CP008", "CP15", "CP20", "CP25", "CP30", "CP45"}
+CONDICION_EXCEPCION = "CP45"
+COND_ANTICIPADO = "CP00"
+COND_RECLAMACION = "MG05"
+COND_INACTIVO = {"MG01", "MG02", "MG03", "MG04", "MG06", "0001"}
+COND_CRA = "CRA"
 # Inyectar un poco de CSS para mejorar la estética de las métricas
 st.markdown("""
     <style>
@@ -33,18 +38,37 @@ def get_engine():
 
 @st.cache_data(ttl=600)
 def cargar_snapshot_actual():
-    """Trae solo la foto más reciente de cada cliente/sucursal"""
     query = """
+    WITH ultimo_dia AS (
+        -- Paso 1: Identificar cuál es el último día con datos en la tabla
+        SELECT MAX(fecha::date) as max_fecha FROM historico_monitor
+    )
     SELECT DISTINCT ON (cliente, destinatario_mercancia)
-        cliente, destinatario_mercancia, nombre, condiciones_pago,
-        fecha, saldo_vencido, saldo_por_vencer, anticipos,
-        depositos_sap, limite_credito
+        cliente, 
+        destinatario_mercancia, 
+        nombre, 
+        condiciones_pago, 
+        fecha, 
+        saldo_vencido, 
+        saldo_por_vencer, 
+        anticipos, 
+        depositos_sap, 
+        limite_credito
     FROM historico_monitor
-    ORDER BY cliente, destinatario_mercancia, fecha DESC
+    WHERE 
+        -- Paso 2: Solo traer registros del último día detectado
+        fecha::date = (SELECT max_fecha FROM ultimo_dia)
+        -- Paso 3: Regla de negocio - Solo registros antes de las 10:00 AM
+        AND hora::time < '10:00:00'
+    ORDER BY 
+        cliente, 
+        destinatario_mercancia, 
+        hora ASC -- Trae el primer registro de la mañana
     """
     engine = get_engine()
     with engine.connect() as con:
-        return pd.read_sql(text(query), con)
+        df = pd.read_sql(text(query), con)
+    return df
 
 @st.cache_data(ttl=300)
 def cargar_historico_cliente(cliente):
@@ -62,14 +86,44 @@ def cargar_historico_cliente(cliente):
 
 def calcular_indicadores(df):
     df = df.copy()
-    df["Saldo_Total"] = df["saldo_vencido"] + df["saldo_por_vencer"]
-    pagos = df["anticipos"] + df["depositos_sap"]
-    df["Sobregiro"] = df["Saldo_Total"] - pagos
-    df["Incumplimiento"] = df["saldo_vencido"] - pagos
-    # Calidad de datos: evitar negativos por errores de captura
-    df["Sobregiro"] = df["Sobregiro"].clip(lower=0)
+    
+    # 1. Sobregiro: (Vencido + Por Vencer) - (Anticipos + Depósitos)
+    df["Sobregiro"] = (((df["saldo_vencido"] + df["saldo_por_vencer"]))- ((df["anticipos"] + df["depositos_sap"])))- ["limite_credito"]
+    
+    # 2. Incumplimiento: Vencido - (Anticipos + Depósitos)
+    df["Incumplimiento"] = df["saldo_vencido"] - (df["anticipos"] + df["depositos_sap"])
+    
+    # 3. % Uso de Crédito: (Vencido + Por Vencer) - Límite
+    df["Uso_Credito_Monto"] = (df["saldo_vencido"] + df["saldo_por_vencer"]) - df["limite_credito"]
+    
+    df["Saldo_Total"] = (df["saldo_vencido"] + df["saldo_por_vencer"])
+
     return df
 
+def clasificar_estatus(row):
+    cond = str(row["condiciones_pago"]).strip()
+    sob = row["Sobregiro"]
+    inc = row["Incumplimiento"]
+    
+    # --- Otros Estatus (No operativos) ---
+    if cond == "MG05": return "🟣 Reclamación"
+    if cond == "CRA": return "🔵 CRA"
+    if cond in ["MG01", "MG02", "MG03", "MG04", "MG06", "0001"]: return "⚫ Inactivo"
+    
+    # --- Excepciones ---
+    if cond == "CP45": return "🟠 Activo (Excepción)"
+    
+    # --- Operativos (Crédito y Anticipado) ---
+    # Crédito: CP008, CP15, CP20, CP25, CP30 | Anticipado: CP00
+    if cond in ["CP008", "CP15", "CP20", "CP25", "CP30", "CP00"]:
+        if sob > 0.01 or inc > 0.01:
+            return "🔴 Suspendido"
+        return "🟢 Activo"
+    
+    return "⚪ Stand By / Otro"
+
+# Para aplicarlo, solo añade esta línea después de calcular indicadores:
+# df["Estatus"] = df.apply(clasificar_estatus, axis=1)
 # ─────────────────────────────────────────────
 # 3. LÓGICA DE CARGA
 # ─────────────────────────────────────────────
