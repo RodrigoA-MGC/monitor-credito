@@ -56,18 +56,12 @@ def cargar_snapshot():
 # HISTÓRICO POR CLIENTE (on demand)
 # ─────────────────────────────────────────────
 @st.cache_data(ttl=300)
+# Cámbialo por esto para que sea más seguro:
 def cargar_historico_cliente(cliente):
-    query = f"""
-    SELECT *
-    FROM historico_monitor
-    WHERE cliente = '{cliente}'
-    ORDER BY fecha DESC
-    """
-
+    query = text("SELECT * FROM historico_monitor WHERE cliente = :c ORDER BY fecha DESC")
     engine = get_engine()
     with engine.connect() as con:
-        df = pd.read_sql(text(query), con)
-
+        df = pd.read_sql(query, con, params={"c": cliente})
     return df
 
 # ─────────────────────────────────────────────
@@ -119,7 +113,14 @@ df_clientes = (
     .reset_index()
 )
 
-st.dataframe(df_clientes, use_container_width=True)
+st.dataframe(
+    df_clientes, 
+    use_container_width=True,
+    column_config={
+        "sobregiro": st.column_config.NumberColumn(format="$%.2f"),
+        "saldo": st.column_config.NumberColumn(format="$%.2f")
+    }
+)
 
 # ─────────────────────────────────────────────
 # SELECTOR CLIENTE
