@@ -2,6 +2,7 @@ import io
 import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, text, pool
+from calculadora_riesgo import render_calculadora
 
 # ─────────────────────────────────────────────
 # 1. CONFIGURACIÓN Y ESTILO
@@ -254,7 +255,7 @@ m4.metric(
 st.divider()
 
 # PESTAÑAS
-tab1, tab2 = st.tabs(["📋 Resumen de Clientes (Hoy)", "📈 Detalle Histórico"])
+tab1, tab2, tab3 = st.tabs(["📋 Resumen de Clientes (Hoy)", "📈 Detalle Histórico", "🧮 Calculadora de Riesgo"])
 
 with tab1:
     st.subheader("Estado Actual de Clientes")
@@ -332,7 +333,8 @@ with tab2:
             )
             
             st.info(f"El cliente {seleccion} ha tenido {len(hist['fecha'].unique())} actualizaciones en el periodo consultado.")
-
+with tab3:
+    render_calculadora(get_engine)
 # ─────────────────────────────────────────────
 # 5. FOOTER
 # ─────────────────────────────────────────────
