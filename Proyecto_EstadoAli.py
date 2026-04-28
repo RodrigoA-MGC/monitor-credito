@@ -45,22 +45,16 @@ def cargar_snapshot():
     FROM historico_monitor
     ORDER BY cliente, destinatario_mercancia, fecha DESC
     """
-
     engine = get_engine()
     with engine.connect() as con:
         df = pd.read_sql(text(query), con)
-
     return df
 
-# ─────────────────────────────────────────────
-# HISTÓRICO POR CLIENTE (on demand)
-# ─────────────────────────────────────────────
 # ─────────────────────────────────────────────
 # HISTÓRICO POR CLIENTE (Optimizado)
 # ─────────────────────────────────────────────
 @st.cache_data(ttl=300)
 def cargar_historico_cliente(cliente):
-    # Seleccionamos columnas específicas para ahorrar memoria
     query = text("""
         SELECT 
             cliente, 
@@ -76,12 +70,9 @@ def cargar_historico_cliente(cliente):
         WHERE cliente = :c
         ORDER BY fecha DESC
     """)
-
     engine = get_engine()
     with engine.connect() as con:
-        # Pasamos el parámetro de forma segura
         df = pd.read_sql(query, con, params={"c": cliente})
-
     return df
 
 # ─────────────────────────────────────────────
@@ -105,29 +96,33 @@ def calcular_indicadores(df):
 # CARGA INICIAL
 # ─────────────────────────────────────────────
 with st.spinner("Cargando datos..."):
-    df = cargar_snapshot()
-    df = calcular_indicadores(df)
+    df_raw = cargar_snapshot()
+    df = calcular_indicadores(df_raw)
 
 # ─────────────────────────────────────────────
 # KPIs
 # ─────────────────────────────────────────────
 k1, k2, k3 = st.columns(3)
 
-k1.metric("Clientes", df["cliente"].nunique())
-k2.metric("Sobregiro Total", f"${df['Sobregiro'].sum():,.2f}")
-k3.metric("Registros", len(df))
+with k1:
+    st.metric("Clientes Únicos", df["cliente"].nunique())
+with k2:
+    st.metric("Sobregiro Total", f"${df['Sobregiro'].sum():,.2f}")
+with k3:
+    st.metric("Registros en Snapshot", len(df))
 
 # ─────────────────────────────────────────────
 # TABLA PRINCIPAL
 # ─────────────────────────────────────────────
-st.subheader("📋 Clientes")
+st.subheader("📋 Resumen por Cliente")
 
+# CORRECCIÓN: Se eliminó el espacio en "nombre "
 df_clientes = (
     df.groupby("cliente")
     .agg(
-        nombre=("nombre ", "first"),
+        nombre=("nombre", "first"),
         sobregiro=("Sobregiro", "sum"),
-        saldo=("saldo_vencido", "sum")
+        saldo_vencido=("saldo_vencido", "sum")
     )
     .reset_index()
 )
@@ -135,41 +130,60 @@ df_clientes = (
 st.dataframe(
     df_clientes, 
     use_container_width=True,
+    hide_index=True, # Limpia la vista
     column_config={
-        "sobregiro": st.column_config.NumberColumn(format="$%.2f"),
-        "saldo": st.column_config.NumberColumn(format="$%.2f")
+        "cliente": "ID Cliente",
+        "nombre": "Nombre del Cliente",
+        "sobregiro": st.column_config.NumberColumn("Sobregiro Total", format="$%.2f"),
+        "saldo_vencido": st.column_config.NumberColumn("Saldo Vencido", format="$%.2f")
     }
 )
 
 # ─────────────────────────────────────────────
-# SELECTOR CLIENTE
+# SELECTOR Y DETALLE
 # ─────────────────────────────────────────────
-st.subheader("👤 Detalle Cliente")
+st.divider()
+st.subheader("👤 Detalle Histórico")
 
 cliente_sel = st.selectbox(
-    "Selecciona cliente",
-    df_clientes["cliente"]
+    "Busca o selecciona un cliente para ver su historial:",
+    options=df_clientes["cliente"],
+    format_func=lambda x: f"{x} - {df_clientes[df_clientes['cliente']==x]['nombre'].values[0]}"
 )
 
-# ─────────────────────────────────────────────
-# HISTÓRICO DINÁMICO
-# ─────────────────────────────────────────────
 if cliente_sel:
-    with st.spinner("Cargando histórico..."):
+    with st.spinner(f"Consultando historial de {cliente_sel}..."):
         hist = cargar_historico_cliente(cliente_sel)
         hist = calcular_indicadores(hist)
 
-    st.write(f"Histórico de cliente: {cliente_sel}")
-    st.dataframe(hist, use_container_width=True)
+    st.write(f"Mostrando registros históricos para el cliente **{cliente_sel}**")
+    
+    # Formateo de la tabla de detalle
+    st.dataframe(
+        hist, 
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "fecha": st.column_config.DateColumn("Fecha Corte"),
+            "Saldo Total": st.column_config.NumberColumn(format="$%.2f"),
+            "Sobregiro": st.column_config.NumberColumn(format="$%.2f"),
+            "Incumplimiento": st.column_config.NumberColumn(format="$%.2f"),
+            "limite_credito": st.column_config.NumberColumn("Límite", format="$%.2f")
+        }
+    )
 
-    # descarga
+    # Función de descarga optimizada
+    @st.cache_data
     def to_excel(df):
-        buffer = io.BytesIO()
-        df.to_excel(buffer, index=False)
-        return buffer.getvalue()
+        output = io.BytesIO()
+        # Usamos context manager para asegurar que se guarde el archivo
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Historial')
+        return output.getvalue()
 
     st.download_button(
-        "📥 Descargar histórico",
+        label="📥 Descargar historial en Excel",
         data=to_excel(hist),
-        file_name=f"{cliente_sel}_historico.xlsx"
+        file_name=f"Historial_Cliente_{cliente_sel}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
