@@ -105,6 +105,7 @@ st.subheader("📋 Clientes")
 
 df_clientes = (
     df.groupby("cliente")
+    print(df.to_string(index=False))
     .agg(
         nombre=("nombre", "first"),
         sobregiro=("Sobregiro", "sum"),
