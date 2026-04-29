@@ -1,52 +1,7 @@
-<?xml version="1.0" encoding="UTF-16"?>
-<!--
-  Tarea programada de Windows para sincronizar Access → PostgreSQL diariamente.
-
-  CÓMO IMPORTAR:
-  1. Abre "Programador de tareas" (Task Scheduler) en Windows
-  2. Clic en "Importar tarea..." en el panel derecho
-  3. Selecciona este archivo
-  4. Ajusta la ruta de Python y del script en <Arguments> y <WorkingDirectory>
--->
-<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo>
-    <Description>Sincroniza Access con PostgreSQL para Monitor de Crédito</Description>
-    <URI>\MonitorCredito\SyncAccessPostgres</URI>
-  </RegistrationInfo>
-
-  <Triggers>
-    <!-- Se ejecuta todos los días a las 6:00 AM -->
-    <CalendarTrigger>
-      <StartBoundary>2024-01-01T09:00:00</StartBoundary>
-      <Enabled>true</Enabled>
-      <ScheduleByDay>
-        <DaysInterval>1</DaysInterval>
-      </ScheduleByDay>
-    </CalendarTrigger>
-    <!-- Segunda ejecución a las 8:00 PM (para capturar carga nocturna) -->
-    <CalendarTrigger>
-      <StartBoundary>2024-01-01T20:00:00</StartBoundary>
-      <Enabled>true</Enabled>
-      <ScheduleByDay>
-        <DaysInterval>1</DaysInterval>
-      </ScheduleByDay>
-    </CalendarTrigger>
-  </Triggers>
-
-  <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
-    <ExecutionTimeLimit>PT1H</ExecutionTimeLimit>
-    <Enabled>true</Enabled>
-    <RunOnlyIfIdle>false</RunOnlyIfIdle>
-    <WakeToRun>false</WakeToRun>
-  </Settings>
-
-  <Actions>
-    <Exec>
-      <!-- AJUSTA estas rutas a tu entorno -->
-      <Command>C:\Python311\python.exe</Command>
-      <Arguments>sync_access_postgres.py --modo sync</Arguments>
-      <WorkingDirectory>C:\Users\rodrigo.vazquez\Desktop\Ali\Py Proyectos\Proyectos_Ali</WorkingDirectory>
-    </Exec>
-  </Actions>
-</Task>
+<Actions>
+  <Exec>
+    <Command>C:\Users\rodrigo.vazquez\AppData\Local\Programs\Python\Python311\python.exe</Command>
+    <Arguments>"C:\Users\rodrigo.vazquez\Desktop\Ali\Py Proyectos\Proyectos_Ali\sync_access_postgres.py" --modo sync</Arguments>
+    <WorkingDirectory>C:\Users\rodrigo.vazquez\Desktop\Ali\Py Proyectos\Proyectos_Ali</WorkingDirectory>
+  </Exec>
+</Actions>

@@ -1,26 +1,31 @@
 """
 sync_access_postgres.py
-═══════════════════════════════════════════════════════════════════
-Espejo Access → PostgreSQL para Monitor de Crédito
-Versión Corregida: Manejo de errores de codificación y rutas
-═══════════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════
+ACCESS → POSTGRES (VERSIÓN ESTABLE REAL)
+
+✔ Limpia columnas inválidas (#, %, espacios, etc.)
+✔ Evita errores de sintaxis en PostgreSQL
+✔ Sync incremental seguro
+✔ Inserción estable con pandas.to_sql
+✔ Índice único para evitar duplicados
+═══════════════════════════════════════════════════════════════
 """
 
 import argparse
 import logging
 import os
 import sys
-import io
+import re
 from datetime import datetime
-from pathlib import Path
 
 import pandas as pd
 import pyodbc
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text, inspect
+from pathlib import Path
 
 # ─────────────────────────────────────────────
-#  LOGGING
+# LOGGING
 # ─────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
@@ -33,202 +38,219 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────
-#  CARGA DE CONFIGURACIÓN (ANTIBALAS)
+# ENV
 # ─────────────────────────────────────────────
-env_path = Path('.') / '.env'
+_env = Path(__file__).parent / ".env"
+load_dotenv(_env, encoding="utf-8")
 
-if env_path.exists():
-    try:
-        # Leemos el archivo ignorando errores de codificación (adiós byte 0xab)
-        with open(env_path, 'r', encoding='utf-8', errors='ignore') as f:
-            content = f.read()
-            # Cargamos las variables desde el flujo de texto limpio
-            load_dotenv(stream=io.StringIO(content), override=True)
-        log.info("✅ Archivo .env cargado exitosamente")
-    except Exception as e:
-        log.warning(f"⚠️ No se pudo leer el archivo .env manualmente: {e}")
-else:
-    log.warning("⚠️ No se encontró el archivo .env, se usarán valores por defecto")
-
-# ── Access ───────────────────────────────────
-# Usamos r'' para que las barras invertidas de Windows no den problemas
-ACCESS_RUTA  = os.getenv("ACCESS_RUTA", r'C:\Users\rodrigo.vazquez\Desktop\Ali\Versiones Access\Credito361 Ali A3.accdb')
+# ─────────────────────────────────────────────
+# CONFIG
+# ─────────────────────────────────────────────
+ACCESS_RUTA  = os.getenv("ACCESS_RUTA")
 ACCESS_TABLA = os.getenv("ACCESS_TABLA", "Historico_Monitor")
 
-# ── PostgreSQL ───────────────────────────────
-PG_HOST     = os.getenv("PG_HOST",     "localhost")
-PG_PUERTO   = os.getenv("PG_PUERTO",   "5432")
-PG_BD       = os.getenv("PG_BD",       "monitor_credito")
-PG_USUARIO  = os.getenv("PG_USUARIO",  "postgres")
-PG_PASSWORD = os.getenv("PG_PASSWORD", "Rayman123$")
-PG_TABLA    = os.getenv("PG_TABLA",    "historico_monitor")
+PG_HOST     = os.getenv("PG_HOST", "localhost")
+PG_PUERTO   = os.getenv("PG_PUERTO", "5432")
+PG_BD       = os.getenv("PG_BD", "monitor_credito")
+PG_USUARIO  = os.getenv("PG_USUARIO", "postgres")
+PG_PASSWORD = os.getenv("PG_PASSWORD")
+PG_TABLA    = os.getenv("PG_TABLA", "historico_monitor")
+
 COLUMNA_FECHA = "fecha"
 
 # ─────────────────────────────────────────────
-#  CONECTORES
+# CONEXIONES
 # ─────────────────────────────────────────────
-
-def conectar_access() -> pyodbc.Connection:
-    # Agregamos comillas a la ruta por si tiene espacios
-    conn_str = (
-        f"DRIVER={{Microsoft Access Driver (*.mdb, *.accdb)}};"
-        f"DBQ={ACCESS_RUTA};"
+def conectar_access():
+    return pyodbc.connect(
+        f"DRIVER={{Microsoft Access Driver (*.mdb, *.accdb)}};DBQ={ACCESS_RUTA};"
     )
-    return pyodbc.connect(conn_str)
 
-def leer_access(query: str) -> pd.DataFrame:
-    con = conectar_access()
-    try:
-        cursor = con.cursor()
-        cursor.execute(query)
-        columnas = [desc[0] for desc in cursor.description]
-        filas    = cursor.fetchall()
-        # Convertir filas de pyodbc a lista de tuplas para Pandas
-        df = pd.DataFrame.from_records([list(f) for f in filas], columns=columnas)
-        log.info(f"Access → {len(df):,} filas leídas")
+def leer_access(query):
+    with conectar_access() as con:
+        df = pd.read_sql(query, con)
+        log.info(f"Access → {len(df):,} filas")
         return df
-    finally:
-        con.close()
 
 def engine_postgres():
     from urllib.parse import quote_plus
-    # quote_plus es vital para el símbolo $ en tu contraseña
-    password_safe = quote_plus(PG_PASSWORD)
-    url = (
-        f"postgresql+psycopg2://{PG_USUARIO}:{password_safe}"
-        f"@{PG_HOST}:{PG_PUERTO}/{PG_BD}"
-    )
+    pwd = quote_plus(PG_PASSWORD)
+
     return create_engine(
-        url,
+        f"postgresql+psycopg2://{PG_USUARIO}:{pwd}@{PG_HOST}:{PG_PUERTO}/{PG_BD}",
         pool_pre_ping=True,
-        # 'utf8' sin guion suele ser más compatible en Windows
         connect_args={"client_encoding": "utf8"},
     )
 
 # ─────────────────────────────────────────────
-#  NORMALIZACIÓN
+# LIMPIEZA CRÍTICA DE COLUMNAS
 # ─────────────────────────────────────────────
-
-MAPEO_COLUMNAS = {
-    "destinatario mercancia":  "destinatario_mercancia",
-    "condiciones de pago":     "condiciones_pago",
-    "nombre 1":                "nombre",
-    "saldo vencido":           "saldo_vencido",
-    "saldo por vencer":        "saldo_por_vencer",
-    "anticipos":               "anticipos",
-    "depositos sap":           "depositos_sap",
-    "limite de credito":       "limite_credito",
-    "cldocumfinanciero":       "cldocumfinanciero",
-    "fecha":                   "fecha",
-    "cliente":                 "cliente",
-    "estatus":                 "estatus",
-}
-
-def _norm(s: str) -> str:
-    return (
-        str(s).strip().lower()
-        .replace("á","a").replace("é","e").replace("í","i")
-        .replace("ó","o").replace("ú","u").replace("ñ","n")
-        .replace("_", " ")
-    )
-
-def normalizar(df: pd.DataFrame) -> pd.DataFrame:
+def limpiar_columnas(df):
     df = df.copy()
-    rename = {}
-    for col in df.columns:
-        k = _norm(col)
-        if k in MAPEO_COLUMNAS:
-            rename[col] = MAPEO_COLUMNAS[k]
-        else:
-            rename[col] = _norm(col).replace(" ", "_")
-    df = df.rename(columns=rename)
 
-    cols_num = ["saldo_vencido", "saldo_por_vencer", "anticipos", "depositos_sap", "limite_credito"]
-    for c in cols_num:
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+    df.columns = [
+        re.sub(r"[^a-zA-Z0-9_]", "_", str(c)).lower()
+        for c in df.columns
+    ]
+
+    df.columns = [
+        re.sub(r"_+", "_", c).strip("_")
+        for c in df.columns
+    ]
+
+    return df
+
+# ─────────────────────────────────────────────
+# NORMALIZACIÓN
+# ─────────────────────────────────────────────
+def normalizar(df):
+    df = limpiar_columnas(df)
 
     if "fecha" in df.columns:
         df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce")
 
+    if "cldocumfinanciero" in df.columns:
+        df["cldocumfinanciero"] = df["cldocumfinanciero"].fillna("SIN_DOC")
+
+    # numéricos seguros
+    num_cols = [
+        "saldo_vencido",
+        "saldo_por_vencer",
+        "anticipos",
+        "depositos_sap",
+        "limite_credito",
+    ]
+
+    for c in num_cols:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+
+    df = df.where(pd.notnull(df), None)
+
     df["_sync_ts"] = datetime.utcnow()
+
     return df
 
 # ─────────────────────────────────────────────
-#  ACCIONES (Migrar, Sync, Verificar)
+# MIGRACIÓN
 # ─────────────────────────────────────────────
-
 def migrar():
-    log.info("═══ MODO MIGRACIÓN COMPLETA ═══")
+    log.info("═══ MIGRACIÓN COMPLETA ═══")
+
     df = leer_access(f"SELECT * FROM [{ACCESS_TABLA}]")
     df = normalizar(df)
+
     engine = engine_postgres()
+
     with engine.begin() as con:
-        df.to_sql(PG_TABLA, con, if_exists="replace", index=False, chunksize=5000, method="multi")
-    _crear_indices(engine)
+        df.to_sql(
+            PG_TABLA,
+            con,
+            if_exists="replace",
+            index=False,
+            method="multi",
+            chunksize=5000,
+        )
+
+    # índice único (clave anti-duplicados)
+    with engine.begin() as con:
+        con.execute(text(f"""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_monitor
+            ON {PG_TABLA} (
+                cliente,
+                fecha,
+                destinatario_mercancia,
+                cldocumfinanciero
+            );
+        """))
+
     log.info(f"✅ Migración completa: {len(df):,} registros")
 
+# ─────────────────────────────────────────────
+# SYNC INCREMENTAL
+# ─────────────────────────────────────────────
 def sync_incremental():
-    log.info("═══ MODO SYNC INCREMENTAL ═══")
+    log.info("═══ SYNC INCREMENTAL ═══")
+
     engine = engine_postgres()
     inspector = inspect(engine)
+
     if not inspector.has_table(PG_TABLA):
-        log.warning("La tabla no existe. Migrando...")
+        log.warning("Tabla no existe → ejecutando migración")
         migrar()
         return
 
     with engine.connect() as con:
-        fecha_max = con.execute(text(f"SELECT MAX({COLUMNA_FECHA}) FROM {PG_TABLA}")).scalar()
+        fecha_max = con.execute(
+            text(f"SELECT MAX({COLUMNA_FECHA}) FROM {PG_TABLA}")
+        ).scalar()
 
     if fecha_max is None:
         migrar()
         return
 
-    fecha_str = pd.Timestamp(fecha_max).strftime("%Y-%m-%d")
-    query = f"SELECT * FROM [{ACCESS_TABLA}] WHERE [{COLUMNA_FECHA}] > #{fecha_str}#"
-    df_new = leer_access(query)
+    # formato Access compatible
+    fecha_str = pd.Timestamp(fecha_max).strftime("%m/%d/%Y %H:%M:%S")
 
-    if df_new.empty:
-        log.info("✅ PG ya está al día.")
+    query = f"""
+        SELECT * FROM [{ACCESS_TABLA}]
+        WHERE [{COLUMNA_FECHA}] > #{fecha_str}#
+    """
+
+    df = leer_access(query)
+
+    if df.empty:
+        log.info("✅ Sin nuevos registros")
         return
 
-    df_new = normalizar(df_new)
+    df = normalizar(df)
+
     with engine.begin() as con:
-        df_new.to_sql(PG_TABLA, con, if_exists="append", index=False, chunksize=5000, method="multi")
-    log.info(f"✅ Sync completo: +{len(df_new):,} registros")
+        df.to_sql(
+            PG_TABLA,
+            con,
+            if_exists="append",
+            index=False,
+            method="multi",
+            chunksize=5000,
+        )
 
-def _crear_indices(engine):
-    indices = [
-        f"CREATE INDEX IF NOT EXISTS idx_{PG_TABLA}_fecha ON {PG_TABLA} (fecha);",
-        f"CREATE INDEX IF NOT EXISTS idx_{PG_TABLA}_cliente ON {PG_TABLA} (cliente);",
-    ]
-    with engine.begin() as con:
-        for sql in indices: con.execute(text(sql))
+    log.info(f"✅ Sync completo: +{len(df):,} registros")
 
-def verificar_conexiones():
-    log.info("── Verificando Access ──")
-    try:
-        con = conectar_access()
-        con.close()
-        log.info("  ✅ Access OK")
-    except Exception as e:
-        log.error(f"  ❌ Access: {e}")
+# ─────────────────────────────────────────────
+# AUTO MODE
+# ─────────────────────────────────────────────
+def modo_auto():
+    engine = engine_postgres()
+    inspector = inspect(engine)
 
-    log.info("── Verificando PostgreSQL ──")
-    try:
-        engine = engine_postgres()
-        with engine.connect() as con:
-            con.execute(text("SELECT 1"))
-        log.info("  ✅ PostgreSQL OK")
-    except Exception as e:
-        log.error(f"  ❌ PostgreSQL Error: {e}")
+    if not inspector.has_table(PG_TABLA):
+        migrar()
+        return
 
+    with engine.connect() as con:
+        count = con.execute(text(f"SELECT COUNT(*) FROM {PG_TABLA}")).scalar()
+
+    if count == 0:
+        migrar()
+    else:
+        sync_incremental()
+
+# ─────────────────────────────────────────────
+# MAIN
+# ─────────────────────────────────────────────
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--modo", choices=["migracion", "sync", "auto", "verificar"], default="verificar")
+    parser.add_argument("--modo", choices=["migracion", "sync", "auto"], default="auto")
     args = parser.parse_args()
 
-    if args.modo == "migracion": migrar()
-    elif args.modo == "sync": sync_incremental()
-    elif args.modo == "verificar": verificar_conexiones()
-    else: log.info("Usa --modo verificar para probar conexiones.")
+    log.info(f"Modo: {args.modo}")
+
+    if args.modo == "migracion":
+        migrar()
+    elif args.modo == "sync":
+        sync_incremental()
+    else:
+        modo_auto()
+
+    log.info("Fin del proceso")
